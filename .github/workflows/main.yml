@@ -16,26 +16,25 @@ jobs:
         Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
         Restart-Service termservice -Force
 
-    - name: Install ngrok
+    - name: Install localtunnel
       run: |
-        Invoke-WebRequest -Uri https://bin.equinox.io/c/4v2PAdc6RUQ/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
-        Expand-Archive -Path ngrok.zip -DestinationPath $env:USERPROFILE\ngrok
-        Remove-Item -Path ngrok.zip
-        $env:PATH += ";$env:USERPROFILE\ngrok"
+        # Install Node.js
+        Invoke-WebRequest -Uri https://nodejs.org/dist/v18.17.1/node-v18.17.1-win-x64.zip -OutFile nodejs.zip
+        Expand-Archive -Path nodejs.zip -DestinationPath $env:USERPROFILE\nodejs
+        Remove-Item -Path nodejs.zip
+        $env:PATH += ";$env:USERPROFILE\nodejs\node-v18.17.1-win-x64"
 
-    - name: Authenticate ngrok
-      run: |
-        echo "Authenticating ngrok..."
-        ngrok authtoken YOUR_AUTH_TOKEN
+        # Install localtunnel using npm
+        npm install -g localtunnel
 
-    - name: Start ngrok Tunnel for RDP
+    - name: Start localtunnel for RDP
       shell: bash
       run: |
-        echo "Starting ngrok tunnel..."
-        ngrok tcp 3389 > ngrok_output.txt 2>&1 &
+        echo "Starting localtunnel..."
+        lt --port 3389 > localtunnel_output.txt 2>&1 &
         sleep 10  # Allow time for the tunnel to establish
-        # Output the ngrok tunnel URL for verification
-        cat ngrok_output.txt
+        # Output the localtunnel URL for verification
+        cat localtunnel_output.txt
 
     - name: Simulate Stuck Behavior for 100 Minutes
       run: |
