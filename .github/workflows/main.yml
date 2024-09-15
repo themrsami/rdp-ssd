@@ -16,15 +16,21 @@ jobs:
         Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
         Restart-Service termservice -Force
 
+    - name: Configure Additional RDP Port
+      run: |
+        # Set up an additional RDP listener on port 12345
+        New-NetFirewallRule -DisplayName "Allow RDP on port 12345" -Direction Inbound -Protocol TCP -LocalPort 12345 -Action Allow
+        netsh advfirewall firewall add rule name="RDP Port 12345" dir=in action=allow protocol=TCP localport=12345
+
     - name: Start Serveo Tunnel for RDP
       shell: bash
       run: |
         echo "Starting Serveo tunnel..."
-        # Start Serveo tunnel in the background
-        ssh -o StrictHostKeyChecking=no -T -R 3389:localhost:3389 serveo.net > serveo_output.txt 2>&1 &
+        # Start Serveo tunnel in the background with port 12345
+        ssh -o StrictHostKeyChecking=no -T -R 12345:localhost:12345 -p 22 -i /path/to/private_key user@serveo.net > serveo_output.txt 2>&1 &
         sleep 10  # Allow time for the tunnel to establish
         # Output the Serveo tunnel URL for verification
-        cat serveo_output.txt
+        grep -Eo 'https://[^\s]+' serveo_output.txt || echo "Tunnel URL not found"
 
     - name: Simulate Stuck Behavior for 100 Minutes
       run: |
