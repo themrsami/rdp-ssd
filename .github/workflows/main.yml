@@ -16,25 +16,41 @@ jobs:
         Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
         Restart-Service termservice -Force
 
-    - name: Install localtunnel
+    - name: Install Cloudflare Tunnel
       run: |
-        # Install Node.js
-        Invoke-WebRequest -Uri https://nodejs.org/dist/v18.17.1/node-v18.17.1-win-x64.zip -OutFile nodejs.zip
-        Expand-Archive -Path nodejs.zip -DestinationPath $env:USERPROFILE\nodejs
-        Remove-Item -Path nodejs.zip
-        $env:PATH += ";$env:USERPROFILE\nodejs\node-v18.17.1-win-x64"
+        # Download and install Cloudflare Tunnel
+        Invoke-WebRequest -Uri https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.zip -OutFile cloudflared.zip
+        Expand-Archive -Path cloudflared.zip -DestinationPath $env:USERPROFILE\cloudflared
+        Remove-Item -Path cloudflared.zip
+        $env:PATH += ";$env:USERPROFILE\cloudflared"
 
-        # Install localtunnel using npm
-        npm install -g localtunnel
-
-    - name: Start localtunnel for RDP
-      shell: bash
+    - name: Authenticate Cloudflare Tunnel
       run: |
-        echo "Starting localtunnel..."
-        lt --port 3389 > localtunnel_output.txt 2>&1 &
-        sleep 10  # Allow time for the tunnel to establish
-        # Output the localtunnel URL for verification
-        cat localtunnel_output.txt
+        # Authenticate Cloudflare Tunnel (this will open a browser window for authentication)
+        cloudflared login
+
+    - name: Create Cloudflare Tunnel
+      run: |
+        # Create a new Cloudflare Tunnel
+        cloudflared tunnel create my-rdp-tunnel
+
+    - name: Configure Tunnel
+      run: |
+        # Create a configuration file for the tunnel
+        $config = @"
+        tunnel: my-rdp-tunnel
+        credentials-file: $env:USERPROFILE\.cloudflared\my-rdp-tunnel.json
+        ingress:
+          - hostname: rdp.example.com
+            service: tcp://localhost:3389
+          - service: http_status:404
+        "@
+        Set-Content -Path "$env:USERPROFILE\.cloudflared\config.yml" -Value $config
+
+    - name: Run Cloudflare Tunnel
+      run: |
+        # Start the Cloudflare Tunnel
+        cloudflared tunnel run my-rdp-tunnel
 
     - name: Simulate Stuck Behavior for 100 Minutes
       run: |
