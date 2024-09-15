@@ -1,4 +1,4 @@
-name: RDP Tunnel with SSD
+name: RDP Tunnel
 
 on: [push, workflow_dispatch]
 
@@ -16,15 +16,26 @@ jobs:
         Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
         Restart-Service termservice -Force
 
-    - name: Start Serveo Tunnel for RDP
+    - name: Install ngrok
+      run: |
+        Invoke-WebRequest -Uri https://bin.equinox.io/c/4v2PAdc6RUQ/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
+        Expand-Archive -Path ngrok.zip -DestinationPath $env:USERPROFILE\ngrok
+        Remove-Item -Path ngrok.zip
+        $env:PATH += ";$env:USERPROFILE\ngrok"
+
+    - name: Authenticate ngrok
+      run: |
+        echo "Authenticating ngrok..."
+        ngrok authtoken YOUR_AUTH_TOKEN
+
+    - name: Start ngrok Tunnel for RDP
       shell: bash
       run: |
-        echo "Starting Serveo tunnel..."
-        # Start Serveo tunnel in the background
-        ssh -o StrictHostKeyChecking=no -T -R 12345:localhost:3389 -p 22 -i /path/to/private_key user@serveo.net > serveo_output.txt 2>&1 &
+        echo "Starting ngrok tunnel..."
+        ngrok tcp 3389 > ngrok_output.txt 2>&1 &
         sleep 10  # Allow time for the tunnel to establish
-        # Output the Serveo tunnel URL for verification
-        grep -Eo 'https://[^\s]+' serveo_output.txt || echo "Tunnel URL not found"
+        # Output the ngrok tunnel URL for verification
+        cat ngrok_output.txt
 
     - name: Simulate Stuck Behavior for 100 Minutes
       run: |
