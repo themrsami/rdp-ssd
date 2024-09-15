@@ -19,7 +19,8 @@ jobs:
     - name: Install Cloudflare Tunnel
       run: |
         # Download and install Cloudflare Tunnel
-        Invoke-WebRequest -Uri https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.zip -OutFile cloudflared.zip
+        $cloudflaredUrl = "https://github.com/cloudflare/cloudflared/releases/download/2024.9.1/cloudflared-windows-amd64.zip"
+        Invoke-WebRequest -Uri $cloudflaredUrl -OutFile cloudflared.zip
         Expand-Archive -Path cloudflared.zip -DestinationPath $env:USERPROFILE\cloudflared
         Remove-Item -Path cloudflared.zip
         $env:PATH += ";$env:USERPROFILE\cloudflared"
