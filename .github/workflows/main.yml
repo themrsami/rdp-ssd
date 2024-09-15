@@ -21,10 +21,9 @@ jobs:
           # Allow RDP through the Windows firewall
           netsh advfirewall firewall set rule group="remote desktop" new enable=Yes
           
-          # Set a password for the current user (use a strong password here)
-          $password = ConvertTo-SecureString 'YourPassword123!' -AsPlainText -Force
+          # Optionally, display the current user
           $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-          Set-LocalUser -Name $user -Password $password
+          Write-Host "Current user is $user"
 
       - name: Start Serveo tunnel for RDP
         run: |
