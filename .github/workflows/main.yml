@@ -16,25 +16,41 @@ jobs:
         Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
         Restart-Service termservice -Force
 
-    - name: Configure Additional RDP Port
-      run: |
-        # Set up an additional RDP listener on port 12345
-        New-NetFirewallRule -DisplayName "Allow RDP on port 12345" -Direction Inbound -Protocol TCP -LocalPort 12345 -Action Allow
-        netsh advfirewall firewall add rule name="RDP Port 12345" dir=in action=allow protocol=TCP localport=12345
-
     - name: Start Serveo Tunnel for RDP
       shell: bash
       run: |
         echo "Starting Serveo tunnel..."
-        # Start Serveo tunnel in the background with port 12345
-        ssh -o StrictHostKeyChecking=no -T -R 12345:localhost:12345 -p 22 -i /path/to/private_key user@serveo.net > serveo_output.txt 2>&1 &
-        sleep 10  # Allow time for the tunnel to establish
-        
-        # Output the Serveo tunnel URL for verification
-        echo "Serveo output:"
-        cat serveo_output.txt
-        echo "Extracting Serveo tunnel URL..."
-        grep -Eo 'https://[^\s]+' serveo_output.txt || echo "Tunnel URL not found"
+
+        # List of ports to try
+        ports=(4444 5555 6666 7777 8888 9999 10000 11000 12000 13000)
+        success=false
+
+        for port in "${ports[@]}"; do
+          echo "Trying port $port..."
+
+          # Set up the additional RDP listener
+          New-NetFirewallRule -DisplayName "Allow RDP on port $port" -Direction Inbound -Protocol TCP -LocalPort $port -Action Allow
+          netsh advfirewall firewall add rule name="RDP Port $port" dir=in action=allow protocol=TCP localport=$port
+
+          # Start Serveo tunnel
+          ssh -o StrictHostKeyChecking=no -T -R $port:localhost:$port -p 22 -i /path/to/private_key user@serveo.net > serveo_output.txt 2>&1 &
+          sleep 10  # Allow time for the tunnel to establish
+
+          # Check if the tunnel URL is found
+          if grep -Eo 'https://[^\s]+' serveo_output.txt > /dev/null; then
+            echo "Tunnel URL found on port $port"
+            success=true
+            break
+          else
+            echo "Port $port failed. Trying next port..."
+          fi
+        done
+
+        if [ "$success" = true ]; then
+          echo "Tunnel established successfully."
+        else
+          echo "Failed to establish tunnel on all tested ports."
+        fi
 
     - name: Simulate Stuck Behavior for 100 Minutes
       run: |
