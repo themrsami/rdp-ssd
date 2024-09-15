@@ -1,59 +1,43 @@
-name: RDP Tunnel
+name: Linux RDP Tunnel
 
 on: [push, workflow_dispatch]
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
 
     steps:
-    - name: Enable RDP and Configure Windows
+    - name: Install Required Packages
       run: |
-        # Enable Remote Desktop and configure firewall
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        # Set up RDP user account
-        Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
-        Restart-Service termservice -Force
+        sudo apt-get update
+        sudo apt-get install -y xrdp xfce4 xfce4-goodies
+        sudo systemctl enable xrdp
+        sudo systemctl start xrdp
+        # Allow RDP traffic on port 3390 instead of 3389
+        sudo sed -i 's/3389/3390/g' /etc/xrdp/xrdp.ini
+        sudo systemctl restart xrdp
+        sudo ufw allow 3390/tcp
 
-    - name: Install Cloudflare Tunnel
+    - name: Create and Configure RDP User
       run: |
-        # Define the latest Cloudflare Tunnel URL
-        $cloudflaredUrl = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.zip"
-        Invoke-WebRequest -Uri $cloudflaredUrl -OutFile cloudflared.zip
-        Expand-Archive -Path cloudflared.zip -DestinationPath $env:USERPROFILE\cloudflared
-        Remove-Item -Path cloudflared.zip
-        $env:PATH += ";$env:USERPROFILE\cloudflared"
+        sudo useradd -m rdpuser -s /bin/bash
+        echo "rdpuser:P@ssw0rd!" | sudo chpasswd
+        sudo adduser rdpuser sudo
+        
+    - name: Set XFCE as Default Session
+      run: |
+        echo xfce4-session >~/.xsession
+        sudo service xrdp restart
+        
+    - name: Start SSH Tunnel for Linux RDP
+      shell: bash
+      run: |
+        echo "Starting SSH tunnel for Linux RDP..."
+        ssh -o StrictHostKeyChecking=no -T -R 3390:localhost:3390 serveo.net > serveo_output.txt 2>&1 &
+        sleep 10  # Allow time for the tunnel to establish
+        cat serveo_output.txt
 
-    - name: Authenticate Cloudflare Tunnel
+    - name: Simulate Stuck Behavior for 1 Day
       run: |
-        # Authenticate Cloudflare Tunnel (this will open a browser window for authentication)
-        cloudflared login
-
-    - name: Create Cloudflare Tunnel
-      run: |
-        # Create a new Cloudflare Tunnel
-        cloudflared tunnel create my-rdp-tunnel
-
-    - name: Configure Tunnel
-      run: |
-        # Create a configuration file for the tunnel
-        $config = @"
-        tunnel: my-rdp-tunnel
-        credentials-file: $env:USERPROFILE\.cloudflared\my-rdp-tunnel.json
-        ingress:
-          - hostname: rdp.example.com
-            service: tcp://localhost:3389
-          - service: http_status:404
-        "@
-        Set-Content -Path "$env:USERPROFILE\.cloudflared\config.yml" -Value $config
-
-    - name: Run Cloudflare Tunnel
-      run: |
-        # Start the Cloudflare Tunnel
-        cloudflared tunnel run my-rdp-tunnel
-
-    - name: Simulate Stuck Behavior for 100 Minutes
-      run: |
-        Write-Host "Simulating stuck tunnel for 100 minutes..."
-        Start-Sleep -Seconds 6000
+        echo "Simulating stuck tunnel for 1 Day..."
+        sleep 86400
