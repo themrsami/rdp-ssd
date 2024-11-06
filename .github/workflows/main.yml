@@ -1,4 +1,4 @@
-name: RDP Access Workflow
+name: RDP Access Workflow with Serveo and Performance Optimizations
 
 on: [push]
 
@@ -6,98 +6,76 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-    - name: Download ngrok
+    - name: Install OpenSSH
       run: |
-        Invoke-WebRequest https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
-        Expand-Archive ngrok.zip -DestinationPath .
-      shell: pwsh
+        Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
+      shell: powershell
 
-    - name: Create ngrok config file
-      run: |
-        echo "authtoken: 1ynqMXNZqPHZFJsrK6oJhkOJDgL_7zkwHGXMRfXwSzABCDEF" | Out-File ngrok.yml -Encoding ASCII
-      shell: pwsh
-
-    - name: Start ngrok
-      run: |
-        Start-Process -FilePath .\ngrok.exe -ArgumentList "tcp 3389 --config ngrok.yml" -RedirectStandardOutput ngrok.log -NoNewWindow
-      shell: pwsh
-
-    - name: Wait for ngrok
-      run: Start-Sleep -Seconds 10
-      shell: pwsh
-
-    - name: Get ngrok public URL
-      run: |
-        $ngrokOutput = Get-Content -Path ngrok.log -Tail 10
-        $pattern = "tcp://(.+?:[0-9]+)"
-        $match = $ngrokOutput | Select-String -Pattern $pattern
-        if ($match) {
-            $NGROK_PUBLIC_URL = $match.Matches.Groups[1].Value
-            echo "NGROK_PUBLIC_URL=$NGROK_PUBLIC_URL" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            Write-Host "NGROK_PUBLIC_URL set to $NGROK_PUBLIC_URL"
-        } else {
-            Write-Host "Failed to extract ngrok URL. ngrok output:"
-            Write-Host $ngrokOutput
-        }
-      shell: pwsh
-
-    - name: Enable RDP
+    - name: Enable RDP and Optimize Performance
       run: |
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-      shell: pwsh
+        
+        # Disable visual effects for performance
+        Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFXSetting' -Value 2
+        
+        # Set power plan to high performance
+        powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+        
+        # Disable unnecessary services
+        Stop-Service -Name "SysMain" -Force
+        Set-Service -Name "SysMain" -StartupType Disabled
+        
+        # Disable Windows Search indexing
+        Set-Service WSearch -StartupType Disabled
+        Stop-Service WSearch
+      shell: powershell
 
-    - name: Create tunnel.bat
+    - name: Set RDP password
       run: |
-        @echo off
-        tasklist /fi "imagename eq ngrok.exe" |find ":" > nul
-        if errorlevel 1 taskkill /f /im ngrok.exe
-        cmd /c start /b ngrok.exe tcp 3389 --config ngrok.yml
-        ping 127.0.0.1 -n 10 > nul
-        for /f "tokens=*" %%a in ('type ngrok.log ^| findstr "url=tcp://"') do set NGROK_URL=%%a
-        set NGROK_URL=%NGROK_URL:~4%
-        echo NGROK_URL: %NGROK_URL%
-      shell: cmd
-
-    - name: Create start.bat
-      run: |
-        @echo off
-        net start TermService
-        mstsc /v:localhost
-        powershell -Command "Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0; Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'"
-        sc start SessionEnv
-      shell: cmd
-
-    - name: Set up tunnel and RDP
-      run: |
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
-        Copy-Item tunnel.bat C:\Users\Public\Desktop\tunnel.bat
-        Copy-Item start.bat C:\Users\Public\Desktop\start.bat
-      shell: pwsh
+      shell: powershell
 
-    - name: Create README file
+    - name: Create Serveo tunnel
       run: |
-        echo "1. Run tunnel.bat to start ngrok tunnel" > C:\Users\Public\Desktop\README.txt
-        echo "2. Run start.bat to start RDP service" >> C:\Users\Public\Desktop\README.txt
-        echo "3. Use the NGROK_URL displayed in the tunnel.bat window to connect via RDP" >> C:\Users\Public\Desktop\README.txt
-        echo "4. Use the following credentials:" >> C:\Users\Public\Desktop\README.txt
-        echo "   Username: runneradmin" >> C:\Users\Public\Desktop\README.txt
-        echo "   Password: P@ssw0rd!" >> C:\Users\Public\Desktop\README.txt
-      shell: pwsh
+        $job = Start-Job -ScriptBlock {
+          ssh -o StrictHostKeyChecking=no -R 80:localhost:3389 serveo.net
+        }
+        Start-Sleep -Seconds 10
+        $output = Receive-Job $job
+        $serveoUrl = ($output | Select-String -Pattern "Forwarding.*tcp://(.*)").Matches.Groups[1].Value
+        echo "SERVEO_URL=$serveoUrl" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        Write-Host "Serveo URL: $serveoUrl"
+      shell: powershell
 
     - name: Output RDP connection details
       run: |
-        if ($env:NGROK_PUBLIC_URL) {
-            Write-Host "RDP is now available at $env:NGROK_PUBLIC_URL"
+        if ($env:SERVEO_URL) {
+          Write-Host "RDP is now available at $env:SERVEO_URL"
         } else {
-            Write-Host "RDP connection URL is not available. Please run tunnel.bat on the remote machine to get the URL."
+          Write-Host "Failed to retrieve Serveo URL"
         }
         Write-Host "Username: runneradmin"
         Write-Host "Password: P@ssw0rd!"
-        Write-Host "IMPORTANT: Check C:\Users\Public\Desktop\README.txt on the remote machine for detailed instructions."
-      shell: pwsh
+      shell: powershell
+
+    - name: Optimize RDP settings
+      run: |
+        # Set RDP to prefer performance over appearance
+        reg add "HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v VisualFXSetting /t REG_DWORD /d 2 /f
+        
+        # Disable desktop composition
+        reg add "HKEY_CURRENT_USER\Software\Microsoft\Windows\DWM" /v CompositionPolicy /t REG_DWORD /d 0 /f
+        
+        # Disable full window dragging
+        reg add "HKEY_CURRENT_USER\Control Panel\Desktop" /v DragFullWindows /t REG_SZ /d 0 /f
+        
+        # Disable cursor shadow
+        reg add "HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v DisableCursorShadow /t REG_DWORD /d 1 /f
+        
+        # Disable font smoothing
+        reg add "HKEY_CURRENT_USER\Control Panel\Desktop" /v FontSmoothing /t REG_SZ /d 0 /f
+      shell: powershell
 
     - name: Keep alive
       run: |
@@ -107,4 +85,4 @@ jobs:
           Start-Sleep -Seconds 600
           $i++
         }
-      shell: pwsh
+      shell: powershell
