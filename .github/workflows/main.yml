@@ -1,37 +1,32 @@
-name: Free Windows RDP with SSD
+name: RDP Tunnel
 
-on:
-  workflow_dispatch:
+on: [push, workflow_dispatch]
 
 jobs:
-  rdp-job:
-    runs-on: windows-latest  # Windows GitHub runner, backed by SSD
+  build:
+    runs-on: windows-latest
+
     steps:
-      - name: Set up SSH keys for Serveo tunneling
-        run: |
-          mkdir $env:USERPROFILE\.ssh
-          ssh-keygen -t rsa -N "" -f $env:USERPROFILE\.ssh\id_rsa
-          echo "Host serveo.net\n\tStrictHostKeyChecking no\n" >> $env:USERPROFILE\.ssh\config
+    - name: Enable RDP and Configure Windows
+      run: |
+        # Enable Remote Desktop and configure firewall
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        # Set up RDP user account
+        Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
+        Restart-Service termservice -Force
 
-      - name: Enable RDP and open firewall
-        run: |
-          # Enable RDP on the Windows machine
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
-          
-          # Allow RDP through the Windows firewall
-          netsh advfirewall firewall set rule group="remote desktop" new enable=Yes
-          
-          # Optionally, display the current user
-          $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-          Write-Host "Current user is $user"
+    - name: Start localhost.run Tunnel for RDP
+      shell: bash
+      run: |
+        echo "Starting localhost.run tunnel..."
+        # Start the SSH tunnel for RDP in the background
+        ssh -o StrictHostKeyChecking=no -R 3389:localhost:3389 ssh.localhost.run > localhost_run_output.txt 2>&1 &
+        sleep 10  # Allow time for the tunnel to establish
+        # Output the localhost.run tunnel URL for verification
+        cat localhost_run_output.txt
 
-      - name: Start Serveo tunnel for RDP
-        run: |
-          # Start Serveo tunnel for port 3389 (RDP port)
-          Start-Process -NoNewWindow powershell -ArgumentList '-NoProfile -ExecutionPolicy Bypass -Command "ssh -R 3389:localhost:3389 serveo.net"'
-
-      - name: Get Serveo tunnel URL
-        run: |
-          Start-Sleep -Seconds 5
-          # Display the Serveo public URL for the RDP connection
-          Write-Host "Your RDP connection URL is: https://serveo.net:3389"
+    - name: Simulate Stuck Behavior for 10 hours
+      run: |
+        Write-Host "Simulating stuck tunnel for 10 hours.."
+        Start-Sleep -Seconds 36000
