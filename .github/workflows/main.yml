@@ -9,84 +9,35 @@ jobs:
     - name: Download ngrok
       run: |
         Invoke-WebRequest https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
-        Expand-Archive ngrok.zip -DestinationPath .\ngrok
+        Expand-Archive ngrok.zip -DestinationPath .
       shell: pwsh
 
-    - name: Verify ngrok installation
+    - name: Create ngrok config file
       run: |
-        if (Test-Path .\ngrok\ngrok.exe) {
-            Write-Host "ngrok.exe exists"
-        } else {
-            Write-Host "ngrok.exe does not exist"
-            Write-Host "Contents of current directory:"
-            Get-ChildItem -Recurse
-        }
-      shell: pwsh
-
-    - name: Check ngrok version
-      run: |
-        try {
-            $ngrokVersion = .\ngrok\ngrok.exe --version
-            Write-Host "ngrok version: $ngrokVersion"
-        } catch {
-            Write-Host "Failed to get ngrok version: $_"
-        }
+        echo "authtoken: 1ynqMXNZqPHZFJsrK6oJhkOJDgL_7zkwHGXMRfXwSzABCDEF" | Out-File ngrok.yml -Encoding ASCII
       shell: pwsh
 
     - name: Start ngrok
       run: |
-        try {
-            .\ngrok\ngrok.exe authtoken 1ynqMXNZqPHZFJsrK6oJhkOJDgL_7zkwHGXMRfXwSzABCDEF
-            Start-Process -FilePath .\ngrok\ngrok.exe -ArgumentList "tcp 3389 --log=stdout" -RedirectStandardOutput ngrok.log -NoNewWindow
-            Start-Sleep -Seconds 5
-            $ngrokProcess = Get-Process ngrok -ErrorAction SilentlyContinue
-            if ($ngrokProcess) {
-                Write-Host "ngrok process is running with ID: $($ngrokProcess.Id)"
-            } else {
-                Write-Host "ngrok process is not running"
-            }
-        } catch {
-            Write-Host "Failed to start ngrok: $_"
-        }
-      env:
-        NGROK_AUTHTOKEN: 1ynqMXNZqPHZFJsrK6oJhkOJDgL_7zkwHGXMRfXwSzABCDEF
+        Start-Process -FilePath .\ngrok.exe -ArgumentList "tcp 3389 --config ngrok.yml" -RedirectStandardOutput ngrok.log -NoNewWindow
       shell: pwsh
 
-    - name: Check ngrok log
-      run: |
-        if (Test-Path ngrok.log) {
-            $logContent = Get-Content ngrok.log
-            Write-Host "ngrok log content:"
-            Write-Host $logContent
-        } else {
-            Write-Host "ngrok log file does not exist"
-        }
+    - name: Wait for ngrok
+      run: Start-Sleep -Seconds 10
       shell: pwsh
 
     - name: Get ngrok public URL
       run: |
-        if (Test-Path ngrok.log) {
-            $logContent = Get-Content ngrok.log
-            $tcpUrl = $logContent | Select-String -Pattern "url=tcp://(.+)" | ForEach-Object { $_.Matches.Groups[1].Value }
-            if ($tcpUrl) {
-                echo "NGROK_PUBLIC_URL=$tcpUrl" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-                Write-Host "NGROK_PUBLIC_URL set to $tcpUrl"
-            } else {
-                Write-Host "Failed to extract TCP URL from ngrok log"
-                Write-Host "Log content:"
-                Write-Host $logContent
-            }
+        $ngrokOutput = Get-Content -Path ngrok.log -Tail 10
+        $pattern = "tcp://(.+?:[0-9]+)"
+        $match = $ngrokOutput | Select-String -Pattern $pattern
+        if ($match) {
+            $NGROK_PUBLIC_URL = $match.Matches.Groups[1].Value
+            echo "NGROK_PUBLIC_URL=$NGROK_PUBLIC_URL" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            Write-Host "NGROK_PUBLIC_URL set to $NGROK_PUBLIC_URL"
         } else {
-            Write-Host "ngrok log file does not exist"
-        }
-      shell: pwsh
-
-    - name: Verify NGROK_PUBLIC_URL
-      run: |
-        if ($env:NGROK_PUBLIC_URL) {
-            Write-Host "NGROK_PUBLIC_URL is set to: $env:NGROK_PUBLIC_URL"
-        } else {
-            Write-Host "NGROK_PUBLIC_URL is not set"
+            Write-Host "Failed to extract ngrok URL. ngrok output:"
+            Write-Host $ngrokOutput
         }
       shell: pwsh
 
@@ -96,9 +47,44 @@ jobs:
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
       shell: pwsh
 
-    - name: Set RDP password
+    - name: Create tunnel.bat
       run: |
+        @echo off
+        tasklist /fi "imagename eq ngrok.exe" |find ":" > nul
+        if errorlevel 1 taskkill /f /im ngrok.exe
+        cmd /c start /b ngrok.exe tcp 3389 --config ngrok.yml
+        ping 127.0.0.1 -n 10 > nul
+        for /f "tokens=*" %%a in ('type ngrok.log ^| findstr "url=tcp://"') do set NGROK_URL=%%a
+        set NGROK_URL=%NGROK_URL:~4%
+        echo NGROK_URL: %NGROK_URL%
+      shell: cmd
+
+    - name: Create start.bat
+      run: |
+        @echo off
+        net start TermService
+        mstsc /v:localhost
+        powershell -Command "Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0; Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'"
+        sc start SessionEnv
+      shell: cmd
+
+    - name: Set up tunnel and RDP
+      run: |
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
+        Copy-Item tunnel.bat C:\Users\Public\Desktop\tunnel.bat
+        Copy-Item start.bat C:\Users\Public\Desktop\start.bat
+      shell: pwsh
+
+    - name: Create README file
+      run: |
+        echo "1. Run tunnel.bat to start ngrok tunnel" > C:\Users\Public\Desktop\README.txt
+        echo "2. Run start.bat to start RDP service" >> C:\Users\Public\Desktop\README.txt
+        echo "3. Use the NGROK_URL displayed in the tunnel.bat window to connect via RDP" >> C:\Users\Public\Desktop\README.txt
+        echo "4. Use the following credentials:" >> C:\Users\Public\Desktop\README.txt
+        echo "   Username: runneradmin" >> C:\Users\Public\Desktop\README.txt
+        echo "   Password: P@ssw0rd!" >> C:\Users\Public\Desktop\README.txt
       shell: pwsh
 
     - name: Output RDP connection details
@@ -106,8 +92,19 @@ jobs:
         if ($env:NGROK_PUBLIC_URL) {
             Write-Host "RDP is now available at $env:NGROK_PUBLIC_URL"
         } else {
-            Write-Host "RDP connection URL is not available"
+            Write-Host "RDP connection URL is not available. Please run tunnel.bat on the remote machine to get the URL."
         }
         Write-Host "Username: runneradmin"
         Write-Host "Password: P@ssw0rd!"
+        Write-Host "IMPORTANT: Check C:\Users\Public\Desktop\README.txt on the remote machine for detailed instructions."
+      shell: pwsh
+
+    - name: Keep alive
+      run: |
+        $i = 0
+        while ($true) {
+          Write-Host "Keeping session alive - $i"
+          Start-Sleep -Seconds 600
+          $i++
+        }
       shell: pwsh
