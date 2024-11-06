@@ -1,39 +1,48 @@
-name: RDP Tunnel
+name: RDP Access Workflow
 
-on: [push, workflow_dispatch]
+on: [push]
 
 jobs:
   build:
     runs-on: windows-latest
-
     steps:
-    - name: Enable RDP and Configure Windows
+    - name: Download ngrok
       run: |
-        # Enable Remote Desktop and configure firewall
+        curl -O https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-amd64.zip
+        unzip ngrok-stable-linux-amd64.zip
+        chmod +x ngrok
+
+    - name: Add ngrok to PATH
+      run: echo "${GITHUB_WORKSPACE}" >> $GITHUB_PATH
+
+    - name: Start ngrok
+      run: |
+        ./ngrok authtoken 1ynqMXNZqPHZFJsrK6oJhkOJDgL_7zkwHGXMRfXwSzABCDEF
+        ./ngrok tcp 3389 --log=stdout > ngrok.log &
+      env:
+        NGROK_AUTHTOKEN: 1ynqMXNZqPHZFJsrK6oJhkOJDgL_7zkwHGXMRfXwSzABCDEF
+
+    - name: Get ngrok public URL
+      run: |
+        sleep 5
+        NGROK_PUBLIC_URL=$(grep -o 'tcp://[^[:space:]]*' ngrok.log | sed 's/tcp:\/\///')
+        echo "NGROK_PUBLIC_URL=$NGROK_PUBLIC_URL" >> $GITHUB_ENV
+
+    - name: Enable RDP
+      run: |
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        # Set up RDP user account
+      shell: pwsh
+
+    - name: Set RDP password
+      run: |
         Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
-        Restart-Service termservice -Force
+      shell: pwsh
 
-    - name: Generate SSH Key Pair
-      shell: bash
+    - name: Output RDP connection details
       run: |
-        echo "Generating SSH key pair for localhost.run..."
-        ssh-keygen -t rsa -b 2048 -f ~/.ssh/id_rsa -N ""
-        cat ~/.ssh/id_rsa.pub > ~/.ssh/authorized_keys  # Authorize the public key
+        echo "RDP is now available at ${{ env.NGROK_PUBLIC_URL }}"
+        echo "Username: runneradmin"
+        echo "Password: P@ssw0rd!"
 
-    - name: Start localhost.run Tunnel for RDP
-      shell: bash
-      run: |
-        echo "Starting localhost.run tunnel..."
-        # Start the SSH tunnel with the generated key
-        ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -R 3389:localhost:3389 ssh.localhost.run > localhost_run_output.txt 2>&1 &
-        sleep 10  # Allow time for the tunnel to establish
-        # Output the localhost.run tunnel URL for verification
-        cat localhost_run_output.txt
-
-    - name: Simulate Stuck Behavior for 10 hours
-      run: |
-        Write-Host "Simulating stuck tunnel for 10 hours.."
-        Start-Sleep -Seconds 36000
+    # Add your other workflow steps here
