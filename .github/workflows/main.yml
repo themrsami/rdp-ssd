@@ -1,88 +1,82 @@
-name: RDP Access Workflow with Serveo and Performance Optimizations
+name: High-Performance RDP Tunnel
 
-on: [push]
+on: [push, workflow_dispatch]
 
 jobs:
   build:
     runs-on: windows-latest
-    steps:
-    - name: Install OpenSSH
-      run: |
-        Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
-      shell: powershell
 
-    - name: Enable RDP and Optimize Performance
+    steps:
+    - name: Enable RDP and Optimize Windows
       run: |
+        # Enable Remote Desktop and configure firewall
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         
-        # Disable visual effects for performance
+        # Set up RDP user account
+        Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
+        
+        # Optimize Windows for performance
         Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFXSetting' -Value 2
+        Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'UserPreferencesMask' -Value ([byte[]](0x90,0x12,0x01,0x80,0x10,0x00,0x00,0x00))
+        
+        # Disable unnecessary services
+        $servicesToDisable = @("SysMain", "WSearch", "WerSvc", "DiagTrack")
+        foreach ($service in $servicesToDisable) {
+          Stop-Service -Name $service -Force
+          Set-Service -Name $service -StartupType Disabled
+        }
         
         # Set power plan to high performance
         powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
         
-        # Disable unnecessary services
-        Stop-Service -Name "SysMain" -Force
-        Set-Service -Name "SysMain" -StartupType Disabled
+        # Optimize network settings
+        Set-NetTCPSetting -SettingName InternetCustom -AutoTuningLevelLocal Normal
+        Set-NetOffloadGlobalSetting -ReceiveSegmentCoalescing Enabled
+        Set-NetOffloadGlobalSetting -ReceiveSideScaling Enabled
         
-        # Disable Windows Search indexing
-        Set-Service WSearch -StartupType Disabled
-        Stop-Service WSearch
-      shell: powershell
-
-    - name: Set RDP password
-      run: |
-        Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
-      shell: powershell
-
-    - name: Create Serveo tunnel
-      run: |
-        $job = Start-Job -ScriptBlock {
-          ssh -o StrictHostKeyChecking=no -R 80:localhost:3389 serveo.net
-        }
-        Start-Sleep -Seconds 10
-        $output = Receive-Job $job
-        $serveoUrl = ($output | Select-String -Pattern "Forwarding.*tcp://(.*)").Matches.Groups[1].Value
-        echo "SERVEO_URL=$serveoUrl" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-        Write-Host "Serveo URL: $serveoUrl"
-      shell: powershell
-
-    - name: Output RDP connection details
-      run: |
-        if ($env:SERVEO_URL) {
-          Write-Host "RDP is now available at $env:SERVEO_URL"
-        } else {
-          Write-Host "Failed to retrieve Serveo URL"
-        }
-        Write-Host "Username: runneradmin"
-        Write-Host "Password: P@ssw0rd!"
-      shell: powershell
-
-    - name: Optimize RDP settings
-      run: |
-        # Set RDP to prefer performance over appearance
-        reg add "HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v VisualFXSetting /t REG_DWORD /d 2 /f
+        # Optimize RDP settings
+        reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" /v fEnableTimeZoneRedirection /t REG_DWORD /d 1 /f
+        reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" /v MaxConnectionTime /t REG_DWORD /d 0 /f
+        reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" /v MaxDisconnectionTime /t REG_DWORD /d 0 /f
+        reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" /v MaxIdleTime /t REG_DWORD /d 0 /f
         
-        # Disable desktop composition
-        reg add "HKEY_CURRENT_USER\Software\Microsoft\Windows\DWM" /v CompositionPolicy /t REG_DWORD /d 0 /f
-        
-        # Disable full window dragging
-        reg add "HKEY_CURRENT_USER\Control Panel\Desktop" /v DragFullWindows /t REG_SZ /d 0 /f
-        
-        # Disable cursor shadow
-        reg add "HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v DisableCursorShadow /t REG_DWORD /d 1 /f
-        
-        # Disable font smoothing
-        reg add "HKEY_CURRENT_USER\Control Panel\Desktop" /v FontSmoothing /t REG_SZ /d 0 /f
-      shell: powershell
+        Restart-Service termservice -Force
 
-    - name: Keep alive
+    - name: Start Serveo Tunnel for RDP
+      shell: bash
       run: |
-        $i = 0
-        while ($true) {
-          Write-Host "Keeping session alive - $i"
-          Start-Sleep -Seconds 600
-          $i++
+        echo "Starting Serveo tunnel..."
+        # Start Serveo tunnel in the background
+        ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -T -R 3389:localhost:3389 serveo.net > serveo_output.txt 2>&1 &
+        sleep 10  # Allow time for the tunnel to establish
+        # Output the Serveo tunnel URL for verification
+        cat serveo_output.txt
+
+    - name: Monitor and Maintain Connection
+      run: |
+        $duration = 36000  # 10 hours in seconds
+        $interval = 300    # Check every 5 minutes
+        $startTime = Get-Date
+        
+        while ((Get-Date) - $startTime).TotalSeconds -lt $duration) {
+          $currentTime = Get-Date
+          Write-Host "Current time: $currentTime - Connection active"
+          
+          # Check if RDP service is running
+          $rdpService = Get-Service termservice
+          if ($rdpService.Status -ne 'Running') {
+            Write-Host "RDP service not running. Restarting..."
+            Restart-Service termservice -Force
+          }
+          
+          # Check if Serveo tunnel is active
+          $serveoProcess = Get-Process | Where-Object { $_.CommandLine -like '*serveo.net*' }
+          if (-not $serveoProcess) {
+            Write-Host "Serveo tunnel not active. Restarting..."
+            Start-Process powershell -ArgumentList "-Command ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -T -R 3389:localhost:3389 serveo.net"
+          }
+          
+          Start-Sleep -Seconds $interval
         }
       shell: powershell
