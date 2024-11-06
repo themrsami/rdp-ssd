@@ -16,12 +16,19 @@ jobs:
         Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
         Restart-Service termservice -Force
 
+    - name: Generate SSH Key Pair
+      shell: bash
+      run: |
+        echo "Generating SSH key pair for localhost.run..."
+        ssh-keygen -t rsa -b 2048 -f ~/.ssh/id_rsa -N ""
+        cat ~/.ssh/id_rsa.pub > ~/.ssh/authorized_keys  # Authorize the public key
+
     - name: Start localhost.run Tunnel for RDP
       shell: bash
       run: |
         echo "Starting localhost.run tunnel..."
-        # Start the SSH tunnel for RDP in the background
-        ssh -o StrictHostKeyChecking=no -R 3389:localhost:3389 ssh.localhost.run > localhost_run_output.txt 2>&1 &
+        # Start the SSH tunnel with the generated key
+        ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -R 3389:localhost:3389 ssh.localhost.run > localhost_run_output.txt 2>&1 &
         sleep 10  # Allow time for the tunnel to establish
         # Output the localhost.run tunnel URL for verification
         cat localhost_run_output.txt
@@ -29,4 +36,4 @@ jobs:
     - name: Simulate Stuck Behavior for 10 hours
       run: |
         Write-Host "Simulating stuck tunnel for 10 hours.."
-        Start-Sleep -Seconds 30000
+        Start-Sleep -Seconds 36000
