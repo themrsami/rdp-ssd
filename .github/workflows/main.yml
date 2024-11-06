@@ -42,6 +42,7 @@ jobs:
         reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" /v MaxIdleTime /t REG_DWORD /d 0 /f
         
         Restart-Service termservice -Force
+      shell: powershell
 
     - name: Start Serveo Tunnel for RDP
       shell: bash
@@ -59,8 +60,15 @@ jobs:
         $interval = 300    # Check every 5 minutes
         $startTime = Get-Date
         
-        while ((Get-Date) - $startTime).TotalSeconds -lt $duration) {
+        while ($true) {
           $currentTime = Get-Date
+          $elapsedTime = ($currentTime - $startTime).TotalSeconds
+          
+          if ($elapsedTime -ge $duration) {
+            Write-Host "Duration limit reached. Exiting."
+            break
+          }
+          
           Write-Host "Current time: $currentTime - Connection active"
           
           # Check if RDP service is running
