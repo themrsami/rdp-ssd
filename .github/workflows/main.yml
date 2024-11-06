@@ -9,30 +9,47 @@ jobs:
     - name: Download ngrok
       run: |
         Invoke-WebRequest https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
-        Expand-Archive ngrok.zip
+        Expand-Archive ngrok.zip -DestinationPath .\ngrok
       shell: pwsh
 
-    - name: Add ngrok to PATH
-      run: echo "$env:GITHUB_WORKSPACE\ngrok" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+    - name: Verify ngrok installation
+      run: |
+        if (Test-Path .\ngrok\ngrok.exe) {
+            Write-Host "ngrok.exe exists"
+        } else {
+            Write-Host "ngrok.exe does not exist"
+            Write-Host "Contents of current directory:"
+            Get-ChildItem -Recurse
+        }
+      shell: pwsh
+
+    - name: Check ngrok version
+      run: |
+        try {
+            $ngrokVersion = .\ngrok\ngrok.exe --version
+            Write-Host "ngrok version: $ngrokVersion"
+        } catch {
+            Write-Host "Failed to get ngrok version: $_"
+        }
       shell: pwsh
 
     - name: Start ngrok
       run: |
-        .\ngrok\ngrok.exe authtoken 1ynqMXNZqPHZFJsrK6oJhkOJDgL_7zkwHGXMRfXwSzABCDEF
-        Start-Process -FilePath .\ngrok\ngrok.exe -ArgumentList "tcp 3389 --log=stdout" -RedirectStandardOutput ngrok.log
+        try {
+            .\ngrok\ngrok.exe authtoken 1ynqMXNZqPHZFJsrK6oJhkOJDgL_7zkwHGXMRfXwSzABCDEF
+            Start-Process -FilePath .\ngrok\ngrok.exe -ArgumentList "tcp 3389 --log=stdout" -RedirectStandardOutput ngrok.log -NoNewWindow
+            Start-Sleep -Seconds 5
+            $ngrokProcess = Get-Process ngrok -ErrorAction SilentlyContinue
+            if ($ngrokProcess) {
+                Write-Host "ngrok process is running with ID: $($ngrokProcess.Id)"
+            } else {
+                Write-Host "ngrok process is not running"
+            }
+        } catch {
+            Write-Host "Failed to start ngrok: $_"
+        }
       env:
         NGROK_AUTHTOKEN: 1ynqMXNZqPHZFJsrK6oJhkOJDgL_7zkwHGXMRfXwSzABCDEF
-      shell: pwsh
-
-    - name: Verify ngrok
-      run: |
-        Get-Process ngrok
-        if (Test-Path ngrok.log) {
-            Write-Host "ngrok log file exists"
-            Get-Content ngrok.log
-        } else {
-            Write-Host "ngrok log file does not exist"
-        }
       shell: pwsh
 
     - name: Check ngrok log
@@ -48,7 +65,6 @@ jobs:
 
     - name: Get ngrok public URL
       run: |
-        Start-Sleep -Seconds 10
         if (Test-Path ngrok.log) {
             $logContent = Get-Content ngrok.log
             $tcpUrl = $logContent | Select-String -Pattern "url=tcp://(.+)" | ForEach-Object { $_.Matches.Groups[1].Value }
